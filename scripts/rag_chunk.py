@@ -1,7 +1,7 @@
 import json
 import re
 import os
-from extractor import extract_text_from_pdf
+from extractor import extract_text
 
 def split_into_rag_chunks(text, source_name=""):
     """
@@ -24,48 +24,64 @@ def split_into_rag_chunks(text, source_name=""):
             
         # หาชื่อมาตราใน chunk วางเป็น Metadata
         # ตัวอย่าง "มาตรา 14 ผู้ใดกระทำความผิด..."
-        match = re.match(r'^(มาตรา\s*[\d๑-๙]+((\/|-)?[\d๑-๙]+)*)', section)
+        match = re.match(r'^(มาตรา\s*[\d๑-๙]+((\\/|-)?[\d๑-๙]+)*)', section)
         
         if match:
              current_section_name = match.group(1).strip()
              content = section[len(current_section_name):].strip()
         else:
              content = section
-             
-        # ถ้าเนื้อหายังยาวเกินไป (เช่นเกิน 1000 ตัวอักษร) อาจจะต้องซอยย่อยด้วย \n ย่อหน้า
-        # ในที่นี้จะเก็บเป็นก้อนเดียวกันก่อน
-        chunks.append({
-            "source": source_name,
-            "section": current_section_name,
-            "text": f"{current_section_name} {content}".strip(),
-            "char_length": len(content)
-        })
+              
+        # สร้างข้อความเต็มของ chunk
+        full_text = f"{current_section_name} {content}".strip()
+        
+        # ถ้า chunk ยาวเกิน 1500 ตัวอักษร ให้ซอยย่อยตาม \n\n (ย่อหน้า)
+        if len(full_text) > 1500:
+            sub_chunks = full_text.split('\n\n')
+            for idx, sub in enumerate(sub_chunks):
+                sub = sub.strip()
+                if sub:
+                    chunks.append({
+                        "source": source_name,
+                        "section": f"{current_section_name} (ส่วน {idx+1})" if len(sub_chunks) > 1 else current_section_name,
+                        "text": sub,
+                        "char_length": len(sub)
+                    })
+        else:
+            chunks.append({
+                "source": source_name,
+                "section": current_section_name,
+                "text": full_text,
+                "char_length": len(full_text)
+            })
         
     return chunks
 
-def process_pdfs_for_rag(pdf_folder, output_jsonl):
-    """อ่านทุก PDF ในโฟลเดอร์ แปลงและบันทึกเป็น RAG JSONL"""
-    if not os.path.exists(pdf_folder):
-         print(f"Folder not found: {pdf_folder}")
+def process_files_for_rag(input_folder, output_jsonl):
+    """อ่านทุก PDF และ TXT ในโฟลเดอร์ แปลงและบันทึกเป็น RAG JSONL"""
+    if not os.path.exists(input_folder):
+         print(f"Folder not found: {input_folder}")
          return
          
-    pdf_files = [f for f in os.listdir(pdf_folder) if f.endswith('.pdf')]
+    supported_ext = ('.pdf', '.txt')
+    input_files = [f for f in os.listdir(input_folder) if f.lower().endswith(supported_ext)]
     
-    if not pdf_files:
-         print(f"No PDF files found in {pdf_folder}")
+    if not input_files:
+         print(f"No PDF/TXT files found in {input_folder}")
          return
 
     all_chunks = []
     
     # ดึงและแบ่ง Chunk ทีละไฟล์
-    for pdf_file in pdf_files:
-        print(f"Processing {pdf_file} for RAG...")
-        pdf_path = os.path.join(pdf_folder, pdf_file)
-        cleaned_text = extract_text_from_pdf(pdf_path)
-        chunks = split_into_rag_chunks(cleaned_text, source_name=pdf_file)
+    for filename in input_files:
+        print(f"Processing {filename} for RAG...")
+        file_path = os.path.join(input_folder, filename)
+        cleaned_text = extract_text(file_path)
+        chunks = split_into_rag_chunks(cleaned_text, source_name=filename)
         all_chunks.extend(chunks)
         
     # บันทึกเป็น JSONL
+    os.makedirs(os.path.dirname(output_jsonl), exist_ok=True)
     print(f"Saving {len(all_chunks)} chunks to {output_jsonl}...")
     with open(output_jsonl, 'w', encoding='utf-8') as f:
         for chunk in all_chunks:
@@ -76,10 +92,11 @@ def process_pdfs_for_rag(pdf_folder, output_jsonl):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Process PDFs for RAG")
-    parser.add_argument("--input", default="../raw_pdfs", help="Folder containing raw PDFs")
+    parser = argparse.ArgumentParser(description="Process PDFs/TXTs for RAG")
+    parser.add_argument("--input", default="../raw_pdfs", help="Folder containing raw PDFs/TXTs")
     parser.add_argument("--output", default="../data_processed/rag_data.jsonl", help="Output JSONL file")
     args = parser.parse_args()
     
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    process_pdfs_for_rag(args.input, args.output)
+    process_files_for_rag(args.input, args.output)
+

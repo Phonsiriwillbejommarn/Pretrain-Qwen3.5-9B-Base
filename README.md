@@ -1,6 +1,6 @@
 # Pretrain-Qwen3.5-9B-Base: Thai Legal PDF Extraction Pipeline
 
-โปรเจกต์นี้มีเป้าหมายเพื่อแปลงไฟล์ PDF กฎหมายไทย (เช่น ประมวลกฎหมายอาญา, พรบ. ต่างๆ) ให้อยู่ในฟอร์แมตข้อมูลคุณภาพสูงสำหรับการพัฒนา AI ด้านกฎหมายไทย โดยรองรับ 2 รูปแบบหลัก:
+โปรเจกต์นี้มีเป้าหมายเพื่อแปลงไฟล์ PDF กฎหมายไทย (เช่น ประมวลกฎหมายอาญา, พรบ. ต่างๆ) และ**ข้อมูลจากเว็บไซต์** ให้อยู่ในฟอร์แมตข้อมูลคุณภาพสูงสำหรับการพัฒนา AI ด้านกฎหมายไทย โดยรองรับ 2 รูปแบบหลัก:
 
 1. **RAG (Retrieval-Augmented Generation):** ซอยเอกสารเป็นก้อน (Chunks) ตามราย "มาตรา" หรือ "หมวด" เพื่อให้ Search ดึงข้อมูลความแม่นยำสูง
 2. **CPT (Continued Pre-Training):** รวบรวมข้อความเป็นบริบทเนื้อหายาวๆ เพื่อ Fine-tune/Pretrain โมเดล Foundation อย่าง `Qwen3.5-9B-Base` ให้ซึมซับภาษากฎหมายไทย
@@ -10,10 +10,10 @@
 ## 📂 โครงสร้างโฟลเดอร์ (Directory Structure)
 
 ```text
-├── raw_pdfs/            # (Input) โฟลเดอร์เก็บไฟล์ PDF ต้นฉบับ (จากเว็บ หรือนำมาวางเอง)
+├── raw_pdfs/            # (Input) โฟลเดอร์เก็บไฟล์ PDF และ TXT ต้นฉบับ
 ├── scripts/             # โฟลเดอร์เก็บโค้ด Python สำหรับสกัดข้อมูล
-│   ├── downloader.py    # โหลดไฟล์ PDF ด้วยลิงก์ตรง หรือสกัดทุกลิงก์จากหน้าเว็บไซต์
-│   ├── extractor.py     # ระบบอ่าน PDF และลบคำขยะ (เช่น สำนักงานกฤษฎีกา, สระลอย)
+│   ├── downloader.py    # โหลดไฟล์ PDF หรือดึงข้อความจากเว็บไซต์
+│   ├── extractor.py     # ระบบอ่าน PDF/TXT และลบคำขยะ (เช่น สำนักงานกฤษฎีกา, สระลอย)
 │   ├── rag_chunk.py     # ตัวหั่นข้อความและแปลงเป็นไฟล์เอาไปทำ RAG
 │   └── cpt_format.py    # ตัวรวมข้อความและแปลงเป็นไฟล์เอาไปทำ Pre-training
 ├── data_processed/      # (Output) โฟลเดอร์เก็บชุดข้อมูล JSONL ที่พร้อมใช้งาน
@@ -29,23 +29,36 @@
 
 ### 1. ติดตั้งไลบรารี
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
-*(ไลบรารีหลักๆ ประกอบไปด้วย: `PyMuPDF` (fitz) เพื่ออ่าน PDF, `pythainlp` เพื่อจัดการสระลอย)*
+*(ไลบรารีหลักๆ: `PyMuPDF` อ่าน PDF, `PyThaiNLP` จัดการสระลอย, `requests` + `beautifulsoup4` ดึงข้อมูลจากเว็บ)*
 
-### 2. นำไฟล์ PDF มาประมวลผล
-คุณสามารถหาไฟล์ PDF เข้ามาในระบบได้ 2 วิธี:
-- **วิธีแต่งเติมเอง:** นำไฟล์เอกสารกฎหมายที่คุณต้องการ (ตย. `ประมวลกฎหมายอาญา.pdf`) มาใส่ไว้ในโฟลเดอร์ `raw_pdfs/`
-- **วิธีโหลดจากเว็บอัตโนมัติ:** ใช้สคริปต์ downloader โหลด PDF จากเว็บไซต์หน่วยงาน
+### 2. นำข้อมูลเข้าสู่ระบบ
+คุณสามารถนำข้อมูลเข้ามาได้ 3 วิธี:
+
+- **วิธีที่ 1: ใส่ไฟล์ PDF เอง** — นำไฟล์ PDF กฎหมายมาวางในโฟลเดอร์ `raw_pdfs/`
+
+- **วิธีที่ 2: โหลด PDF จากเว็บอัตโนมัติ** — สแกนหา PDF ในหน้าเว็บ
   ```bash
   cd scripts
-  
+
   # โหลดจากลิงก์ PDF โดยตรง
-  python downloader.py --url https://example.com/law.pdf
-  
-  # ค้นหาและดูดทุก PDF ที่ซ่อนอยู่ในหน้าเว็บรวมกฎหมาย
-  python downloader.py --url https://www.krisdika.go.th/laws
+  python3 downloader.py --url https://example.com/law.pdf
+
+  # ค้นหาและดูดทุก PDF ที่ซ่อนอยู่ในหน้าเว็บ
+  python3 downloader.py --url https://www.krisdika.go.th/laws
+  ```
+
+- **วิธีที่ 3: ดึงข้อความจากหน้าเว็บธรรมดา** — สำหรับเว็บที่ไม่มี PDF
+  ```bash
+  cd scripts
+
+  # ระบบจะสแกนหา PDF ก่อน ถ้าไม่เจอจะ scrape ข้อความแทนอัตโนมัติ
+  python3 downloader.py --url https://www.supremecourt.or.th/ประวัติศาลฎีกา
+
+  # หรือบังคับ scrape ข้อความโดยข้าม PDF ไปเลย
+  python3 downloader.py --url https://example.com/page --scrape
   ```
 
 ### 3. รันสคริปต์สกัดข้อความ
@@ -54,14 +67,14 @@ pip install -r requirements.txt
 **สำหรับข้อมูล RAG:**
 ```bash
 cd scripts
-python rag_chunk.py
+python3 rag_chunk.py
 ```
 *ระบบจะสร้างไฟล์ `data_processed/rag_data.jsonl` โดยอัตโนมัติ*
 
 **สำหรับข้อมูล CPT (Pre-training):**
 ```bash
 cd scripts
-python cpt_format.py
+python3 cpt_format.py
 ```
 *ระบบจะสร้างไฟล์ `data_processed/cpt_data.jsonl` โดยอัตโนมัติ*
 
@@ -73,6 +86,7 @@ python cpt_format.py
 - แก้ปัญหาสระลอย/จม โดยใช้ `PyThaiNLP.util.normalize`
 - เชื่อมประโยคที่ถูกเว้นวรรคขาดตอนจากบรรทัดใหม่ ให้กลับมาเป็นย่อหน้าเดียวกัน
 - กรองเลขหน้า และสัญลักษณ์จัดหน้าออกไป
+- รองรับไฟล์ทั้ง `.pdf` และ `.txt`
 
 ---
 

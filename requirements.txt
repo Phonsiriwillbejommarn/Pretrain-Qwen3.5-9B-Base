@@ -1,4 +1,4 @@
 PyMuPDF==1.25.1
-pandas
 PyThaiNLP
-tqdm
+requests
+beautifulsoup4

@@ -27,9 +27,12 @@ def clean_thai_text(text):
     for wm in watermarks_to_remove:
         text = text.replace(wm, "")
     
-    # แก้ปัญหาบรรทัดถูกตัด באמצעประโยค
+    # แก้ปัญหาบรรทัดถูกตัดกลางประโยค
     lines = text.split('\n')
     cleaned_lines = []
+    
+    # ตัวอักษรที่บ่งบอกว่าประโยคจบแล้ว
+    SENTENCE_ENDINGS = (')', ')', '"', '"', '>', '』', '।')
     
     for i, line in enumerate(lines):
         line = line.strip()
@@ -45,12 +48,15 @@ def clean_thai_text(text):
             # ถ้าบรรทัดนี้ขึ้นต้นด้วย "มาตรา" เราให้มันแยกเป็นบรรทัดใหม่แน่นอน
             if re.match(r'^(มาตรา|ข้อ|หมวด|ส่วน|\d+\.)', line):
                 cleaned_lines.append(line)
-            # ถ้าบรรทัดก่อนหน้าดูจะยังไม่จบ (ไม่มีช่องว่าง หรือไม่ใช่หัวข้อสั้นๆ) เราจะเอาบรรทัดปัจจุบันไปต่อ
-            elif not prev_line.endswith(' '):
-                # ก่อนต่อเช็คไม่ให้เชื่อมตัวอักษรบางกลุ่มที่มักเว้นวรรค เช่นวงเล็บ
-                cleaned_lines[-1] = prev_line + line
-            else:
+            # ถ้าบรรทัดก่อนหน้าจบด้วยเครื่องหมายที่บ่งบอกว่าจบประโยค → ขึ้นบรรทัดใหม่
+            elif prev_line.endswith(SENTENCE_ENDINGS) or prev_line.endswith(' '):
                 cleaned_lines.append(line)
+            # ถ้าบรรทัดก่อนหน้าสั้นมาก (น่าจะเป็นหัวข้อ) → ขึ้นบรรทัดใหม่
+            elif len(prev_line) < 20:
+                cleaned_lines.append(line)
+            else:
+                # เชื่อมบรรทัดที่ถูกตัดกลางคัน
+                cleaned_lines[-1] = prev_line + line
         else:
             cleaned_lines.append(line)
             
@@ -62,18 +68,38 @@ def clean_thai_text(text):
 def extract_text_from_pdf(pdf_path):
     """ดึงข้อความทั้งหมดจากเอกสาร PDF และทำความสะอาด"""
     try:
-        doc = fitz.open(pdf_path)
-        full_text = ""
-        for page_num in range(len(doc)):
-            page = doc.load_page(page_num)
-            text = page.get_text("text")
-            full_text += text + "\n"
+        with fitz.open(pdf_path) as doc:
+            full_text = ""
+            for page_num in range(len(doc)):
+                page = doc.load_page(page_num)
+                text = page.get_text("text")
+                full_text += text + "\n"
             
         return clean_thai_text(full_text)
     except Exception as e:
         print(f"Error reading {pdf_path}: {e}")
         return ""
 
+def extract_text_from_txt(txt_path):
+    """อ่านข้อความจากไฟล์ .txt (ที่ scrape มาจากเว็บ) และทำความสะอาด"""
+    try:
+        with open(txt_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        return clean_thai_text(text)
+    except Exception as e:
+        print(f"Error reading {txt_path}: {e}")
+        return ""
+
+def extract_text(file_path):
+    """ดึงข้อความจากไฟล์ รองรับทั้ง PDF และ TXT"""
+    if file_path.lower().endswith('.pdf'):
+        return extract_text_from_pdf(file_path)
+    elif file_path.lower().endswith('.txt'):
+        return extract_text_from_txt(file_path)
+    else:
+        print(f"Unsupported file type: {file_path}")
+        return ""
+
 if __name__ == "__main__":
-    # Test script if executed directly
-    print("PDF Extractor initialized. Please import to use or provide a test file.")
+    print("Extractor initialized. Supports: .pdf, .txt")
+    print("Usage: from extractor import extract_text")
