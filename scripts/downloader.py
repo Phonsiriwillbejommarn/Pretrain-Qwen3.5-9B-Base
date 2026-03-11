@@ -3,26 +3,49 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, unquote
 
+def get_browser_headers(url=None):
+    """ส่งคืน Headers ที่ปลอมตัวเป็น Web Browser ปกติ"""
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'cross-site',
+        'Pragma': 'no-cache',
+        'Cache-Control': 'no-cache'
+    }
+    if url:
+        # ใช้ hostname ของ URL เป็น Referer หลอก
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc
+        headers['Referer'] = f"https://{domain}/"
+        headers['Host'] = domain
+        
+    return headers
+
 def download_file(url, output_folder):
     """ฟังก์ชันหลักสำหรับดาวน์โหลดไฟล์ 1 ไฟล์"""
     os.makedirs(output_folder, exist_ok=True)
     
+    headers = get_browser_headers(url)
+    filename = unquote(url.split('/')[-1])
+    if not filename.endswith('.pdf'):
+        filename += '.pdf'
+        
+    file_path = os.path.join(output_folder, filename)
+    
+    # ข้ามถ้าโหลดมาแล้ว
+    if os.path.exists(file_path):
+        print(f"[{filename}] Skip: Already exists.")
+        return True
+        
     try:
-        response = requests.get(url, stream=True, timeout=15)
+        response = requests.get(url, stream=True, timeout=30, headers=headers)
         response.raise_for_status()
-        
-        # ถอดรหัสชื่อไฟล์ภาษาไทย (ถ้าชื่อยาวไปอาจต้องตัด)
-        filename = unquote(url.split('/')[-1])
-        if not filename.endswith('.pdf'):
-            # เผื่อลิงก์ไม่มีนามสกุล .pdf ต่อท้าย แต่บังคับโหลดมาเป็น pdf
-            filename += '.pdf'
-            
-        file_path = os.path.join(output_folder, filename)
-        
-        # ข้ามถ้าโหลดมาแล้ว
-        if os.path.exists(file_path):
-            print(f"[{filename}] Skip: Already exists.")
-            return True
 
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
@@ -32,8 +55,32 @@ def download_file(url, output_folder):
         return True
         
     except requests.exceptions.RequestException as e:
-        print(f"[Error] Failed to download {url}: {e}")
-        return False
+        print(f"[Warning] requests failed for {url}: {e}. Retrying with Urllib fallback...")
+        try:
+            print(f"[Warning] requests failed for {url}. Retrying with curl fallback...")
+            import subprocess
+            
+            # ใช้ curl นอก python เพื่อหลบ WAF fingerprinting
+            cmd = [
+                "curl", "-sL", "-A", headers['User-Agent'],
+                "--compressed", "-k", "-o", file_path, url
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True)
+            
+            # โชคร้ายที่บางเว็บส่ง 403 html กลับมาแทนไฟล์ pdf ใน curl
+            # เช็คว่าไฟล์ที่ได้มามีขนาดมากกว่า 1KB ไหม (ถ้าเล็กกว่าแปลว่าเป็น HTML error page)
+            if os.path.getsize(file_path) > 1024:
+                print(f"[{filename}] Status: Download Success via curl!")
+                return True
+            else:
+                os.remove(file_path)
+                print(f"[Error] curl downloaded an invalid file/error page for {url}.")
+                return False
+                
+        except Exception as fallback_e:
+            print(f"[Error] Fallback also failed for {url}: {fallback_e}")
+            return False
 
 def pull_pdfs_from_page(page_url, output_folder):
     """ควานหาและดาวน์โหลดไฟล์ PDF ทุกไฟล์ที่อยู่ในหน้าเว็บที่ระบุ"""
